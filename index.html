@@ -551,7 +551,20 @@ function renderAll(){
 
   const txs=getMonthTxs();
   const income=txs.filter(t=>t.type==='income').reduce((a,t)=>a+t.val,0);
-  const expense=txs.filter(t=>t.type==='expense').reduce((a,t)=>a+t.val,0);
+  const expenseTxs=txs.filter(t=>t.type==='expense').reduce((a,t)=>a+t.val,0);
+  // Boletos pagos no mês atual contam como despesa
+  const boletosDoMes=data.boletos.filter(b=>{
+    if(!b.paid)return false;
+    const d=new Date(b.due+'T00:00:00');
+    return d.getMonth()===curMonth&&d.getFullYear()===curYear;
+  });
+  const expenseBoletos=boletosDoMes.reduce((a,b)=>a+b.val,0);
+  // Faturas de cartão pagas no mês atual contam como despesa
+  const faturaDoMes=data.cards?data.cards.reduce((a,c)=>{
+    const f=getFatura(c.id,curMonth,curYear);
+    return a+(f.paga?f.val:0);
+  },0):0;
+  const expense=expenseTxs+expenseBoletos+faturaDoMes;
   const balance=income-expense;
 
   document.getElementById('home-income').textContent=fmt(income);
@@ -560,8 +573,16 @@ function renderAll(){
   document.getElementById('balance-sub').textContent=fmt(income)+' − '+fmt(expense);
   document.getElementById('balance-hero').className='balance-hero'+(balance<0?' negative':'');
 
-  // Home recent tx
-  const sorted=[...txs].sort((a,b)=>new Date(b.date+'T00:00:00')-new Date(a.date+'T00:00:00'));
+  // Monta lista completa: transações + boletos pagos + faturas pagas do mês
+  const boletoItems=boletosDoMes.map(b=>({
+    id:'b'+b.id,type:'expense',desc:b.name,val:b.val,cat:'Contas fixas',date:b.due
+  }));
+  const faturaItems=(data.cards||[]).filter(c=>{const f=getFatura(c.id,curMonth,curYear);return f.paga&&f.val>0;}).map(c=>{
+    const f=getFatura(c.id,curMonth,curYear);
+    return{id:'f'+c.id,type:'expense',desc:`Fatura •••• ${c.digits}`,val:f.val,cat:'Cartão de crédito',date:`${curYear}-${String(curMonth+1).padStart(2,'0')}-${String(c.due||1).padStart(2,'0')}`};
+  });
+  const allItems=[...txs,...boletoItems,...faturaItems];
+  const sorted=allItems.sort((a,b)=>new Date(b.date+'T00:00:00')-new Date(a.date+'T00:00:00'));
   const htxEl=document.getElementById('home-tx-list');
   if(!sorted.length)htxEl.innerHTML='<div class="empty"><svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/></svg><p>Nenhuma transação ainda</p></div>';
   else htxEl.innerHTML=`<div class="tx-list">${sorted.slice(0,6).map(t=>renderTxItem(t,false)).join('')}</div>`;
@@ -592,10 +613,10 @@ function renderAll(){
   if(pending.length){alertHtml+=`<div class="alert-card"><div class="alert-card-title">${iconBell} ${pending.length} boleto(s) a vencer em 7 dias</div>${pending.map(b=>`<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--amber-text)">${b.name} · ${fmtDate(b.due)}</span><span style="font-weight:600;color:var(--amber)">${fmt(b.val)}</span></div>`).join('')}</div>`;}
   alertEl.innerHTML=alertHtml;
 
-  // Tx history
+  // Tx history (tela Lançamentos) — mostra tudo incluindo boletos e faturas
   const histEl=document.getElementById('tx-history');
   if(!sorted.length)histEl.innerHTML='<div class="empty"><svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/></svg><p>Nenhum lançamento</p></div>';
-  else histEl.innerHTML=`<div class="tx-list">${sorted.map(t=>renderTxItem(t,true)).join('')}</div>`;
+  else histEl.innerHTML=`<div class="tx-list">${sorted.map(t=>renderTxItem(t,!t.id.toString().startsWith('b')&&!t.id.toString().startsWith('f'))).join('')}</div>`;
 
   // Boletos
   const bEl=document.getElementById('boleto-list');
@@ -622,7 +643,7 @@ function renderAll(){
   rb.textContent=fmt(balance);
   rb.style.color=balance<0?'var(--red)':'var(--green)';
   const catMap={};
-  txs.filter(t=>t.type==='expense').forEach(t=>{catMap[t.cat]=(catMap[t.cat]||0)+t.val;});
+  allItems.filter(t=>t.type==='expense').forEach(t=>{catMap[t.cat]=(catMap[t.cat]||0)+t.val;});
   const cats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
   const catEl=document.getElementById('cat-bars');
   if(!cats.length)catEl.innerHTML='<div style="font-size:13px;color:var(--text3)">Nenhuma despesa no período.</div>';
